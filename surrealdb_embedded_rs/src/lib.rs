@@ -137,10 +137,20 @@ pub extern "C" fn surreal_query(handle: i32, query_ptr: *const c_char) -> *mut c
 
     match result {
         Ok(mut response) => {
-            // Try to take all results
+            // Try to take all results - use a more robust approach
             let json_result = match response.take::<Vec<Value>>(0) {
-                Ok(values) => serde_json::to_string(&values).unwrap_or_else(|_| "[]".to_string()),
-                Err(_) => "[]".to_string(),
+                Ok(values) => {
+                    // Convert to JSON and normalize any SurrealDB-specific formatting
+                    match serde_json::to_string(&values) {
+                        Ok(json) => normalize_surrealdb_json(&json),
+                        Err(_) => "[]".to_string(),
+                    }
+                }
+                Err(_) => {
+                    // If Vec<Value> fails, just return empty array
+                    // SurrealDB responses should always be Vec<Value>
+                    "[]".to_string()
+                }
             };
 
             CString::new(json_result).unwrap().into_raw()
@@ -150,6 +160,70 @@ pub extern "C" fn surreal_query(handle: i32, query_ptr: *const c_char) -> *mut c
             CString::new(error_json).unwrap().into_raw()
         }
     }
+}
+
+/// Normalize SurrealDB JSON format to standard JSON
+/// Removes 'f' suffix from float numbers and fixes other SurrealDB-specific formatting
+fn normalize_surrealdb_json(json: &str) -> String {
+    // Replace float suffix 'f' with nothing (e.g., "0.412f" -> "0.412")
+    // Use regex-like pattern matching
+    let result = json.to_string();
+
+    // Handle patterns like: 0.123f, 1.0f, etc.
+    // We need to be careful to only match float literals, not 'f' in strings
+    let mut normalized = String::with_capacity(result.len());
+    let mut chars = result.chars().peekable();
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    while let Some(ch) = chars.next() {
+        if escape_next {
+            normalized.push(ch);
+            escape_next = false;
+            continue;
+        }
+
+        if ch == '\\' && in_string {
+            escape_next = true;
+            normalized.push(ch);
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = !in_string;
+            normalized.push(ch);
+            continue;
+        }
+
+        // If we're in a string, just copy the character
+        if in_string {
+            normalized.push(ch);
+            continue;
+        }
+
+        // Check if this is a float suffix 'f'
+        if ch == 'f' {
+            // Look back to see if previous character is a digit or '.'
+            if let Some(last_ch) = normalized.chars().last() {
+                if last_ch.is_ascii_digit() || last_ch == '.' {
+                    // Check if next char is not alphanumeric (to avoid matching 'from', 'for', etc.)
+                    if let Some(&next_ch) = chars.peek() {
+                        if !next_ch.is_alphanumeric() && next_ch != '_' {
+                            // Skip the 'f' suffix
+                            continue;
+                        }
+                    } else {
+                        // End of string, skip the 'f'
+                        continue;
+                    }
+                }
+            }
+        }
+
+        normalized.push(ch);
+    }
+
+    normalized
 }
 
 /// Execute a SurrealQL query with parameters and return result as JSON string
@@ -196,9 +270,17 @@ pub extern "C" fn surreal_query_with_params(
 
     match result {
         Ok(mut response) => {
+            // Use the same robust approach as surreal_query
             let json_result = match response.take::<Vec<Value>>(0) {
-                Ok(values) => serde_json::to_string(&values).unwrap_or_else(|_| "[]".to_string()),
-                Err(_) => "[]".to_string(),
+                Ok(values) => match serde_json::to_string(&values) {
+                    Ok(json) => normalize_surrealdb_json(&json),
+                    Err(_) => "[]".to_string(),
+                },
+                Err(_) => {
+                    // If Vec<Value> fails, just return empty array
+                    // SurrealDB responses should always be Vec<Value>
+                    "[]".to_string()
+                }
             };
 
             CString::new(json_result).unwrap().into_raw()
