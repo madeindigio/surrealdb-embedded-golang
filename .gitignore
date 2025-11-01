@@ -1,0 +1,39 @@
+# Rust
+surrealdb_embedded_rs/target/
+surrealdb_embedded_rs/Cargo.lock
+surrealdb_embedded_rs/include/*.h
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.sum
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database files
+*.db
+data/
+*.rocksdb/
+
+# Build artifacts
+*.a
+*.lib
+
+# Examples output
+examples/*/data/
+examples/*/*.db

@@ -1,0 +1,48 @@
+{
+  "mcpServers": {
+    "hyper-mcp": {
+      "command": "hyper-mcp",
+      "args": ["--config-file", "/home/sevir/.config/hyper-mcp/assistant.yaml"],
+      "trust": true
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "trust": true
+    },
+    "mycommandmcp": {
+      "command": "mycommandmcp",
+      "args": [
+        "--config",
+        "/www/MCP/Remembrances/surrealdb-embedded/.ai/mycommand-mcp.yaml"
+      ],
+      "env": {},
+      "trust": true
+    },
+    "serena": {
+      "command": "pkgx",
+      "args": [
+        "uvx",
+        "--from",
+        "git+https://github.com/oraios/serena",
+        "serena",
+        "start-mcp-server",
+        "--context",
+        "ide-assistant",
+        "--project",
+        "/www/MCP/Remembrances/surrealdb-embedded"
+      ],
+      "env": {},
+      "trust": true
+    },
+    "remembrances": {
+      "command": "/www/MCP/Remembrances/surrealdb-embedded/remembrances-mcp",
+      "args": [
+        "--config",
+        "/www/MCP/Remembrances/surrealdb-embedded/.ai/remembrances.config.yaml"
+      ],
+      "env": {},
+      "trust": true
+    }
+  }
+}
