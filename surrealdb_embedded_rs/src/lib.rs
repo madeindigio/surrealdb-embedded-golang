@@ -176,7 +176,7 @@ pub extern "C" fn surreal_init(url_ptr: *const c_char) -> i32 {
             .trim_start_matches("file:");
         rt.block_on(async { Surreal::new::<RocksDb>(path).await })
     } else {
-        eprintln!("Unsupported database URL: {}", url);
+// DEBUG: removed
         return SURREAL_ERR_INIT_FAILED;
     };
 
@@ -191,7 +191,7 @@ pub extern "C" fn surreal_init(url_ptr: *const c_char) -> i32 {
             handle
         }
         Err(e) => {
-            eprintln!("Error initializing database: {:?}", e);
+// DEBUG: removed
             SURREAL_ERR_INIT_FAILED
         }
     }
@@ -250,7 +250,7 @@ pub extern "C" fn surreal_use(handle: i32, ns_ptr: *const c_char, db_ptr: *const
     match result {
         Ok(_) => SURREAL_OK,
         Err(e) => {
-            eprintln!("Error in surreal_use: {:?}", e);
+// DEBUG: removed
             SURREAL_ERR_USE_FAILED
         }
     }
@@ -274,45 +274,45 @@ pub extern "C" fn surreal_query(handle: i32, query_ptr: *const c_char) -> *mut c
     drop(instances);
 
     let query = unsafe { CStr::from_ptr(query_ptr).to_string_lossy().into_owned() };
-    eprintln!("surreal_query called with: {}", query);
+// DEBUG: removed
 
     let rt = get_runtime();
     let result = rt.block_on(async { db_instance.query(&query).await });
-    eprintln!("Query executed");
+// DEBUG: removed
 
     match result {
         Ok(mut response) => {
-            eprintln!("Query succeeded");
+// DEBUG: removed
 
             // The Response contains the results wrapped in Array(Array([...]))
             // We need to take the OUTER Value which will be like Array(...)
             let json_result = match response.take::<Value>(0) {
                 Ok(outer_value) => {
-                    eprintln!("Got outer value, converting...");
+// DEBUG: removed
                     // Convert the whole thing
                     let json_value = value_to_json(outer_value);
                     match serde_json::to_string(&json_value) {
                         Ok(json) => {
-                            eprintln!("Serialized to JSON: {}", json);
+// DEBUG: removed
                             json
                         }
                         Err(e) => {
-                            eprintln!("Serialization error: {}", e);
+// DEBUG: removed
                             "[]".to_string()
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to take Value: {}", e);
+// DEBUG: removed
                     "[]".to_string()
                 }
             };
 
-            eprintln!("Returning: {}", json_result);
+// DEBUG: removed
             CString::new(json_result).unwrap().into_raw()
         }
         Err(e) => {
-            eprintln!("Query failed: {}", e);
+// DEBUG: removed
             let error_json = format!(r#"{{"error": "{}"}}"#, e);
             CString::new(error_json).unwrap().into_raw()
         }
@@ -429,18 +429,18 @@ pub extern "C" fn surreal_query_with_params(
         Ok(mut response) => {
             let json_result = match response.take::<Value>(0) {
                 Ok(outer_value) => {
-                    eprintln!("Got value from query_with_params, converting...");
+// DEBUG: removed
                     let json_value = value_to_json(outer_value);
                     match serde_json::to_string(&json_value) {
                         Ok(json) => json,
                         Err(e) => {
-                            eprintln!("Serialization error: {}", e);
+// DEBUG: removed
                             "[]".to_string()
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to take Value: {}", e);
+// DEBUG: removed
                     "[]".to_string()
                 }
             };
