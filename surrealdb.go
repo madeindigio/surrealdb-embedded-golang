@@ -38,6 +38,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"unsafe"
 )
 
@@ -154,6 +155,11 @@ func (db *DB) Query(query string, vars map[string]interface{}) ([]interface{}, e
 		}
 	}
 
+	// Handle null result (e.g., from DEFINE statements)
+	if jsonStr == "null" {
+		return []interface{}{}, nil
+	}
+
 	var data []interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal result: %w", err)
@@ -173,7 +179,22 @@ func (db *DB) Select(resource string) (interface{}, error) {
 	}
 	defer C.surreal_free_string(result)
 
-	return parseResult(C.GoString(result))
+	parsed, err := parseResult(C.GoString(result))
+	if err != nil {
+		return nil, err
+	}
+
+	// If resource contains ":", it's querying a specific record (e.g., "person:123")
+	// In this case, unwrap the array and return the first element
+	if strings.Contains(resource, ":") {
+		if arr, ok := parsed.([]interface{}); ok && len(arr) > 0 {
+			return arr[0], nil
+		}
+		// If it's already a single object or empty, return as is
+		return parsed, nil
+	}
+
+	return parsed, nil
 }
 
 // Create creates a new record in the database
@@ -194,7 +215,17 @@ func (db *DB) Create(resource string, data interface{}) (interface{}, error) {
 	}
 	defer C.surreal_free_string(result)
 
-	return parseResult(C.GoString(result))
+	parsed, err := parseResult(C.GoString(result))
+	if err != nil {
+		return nil, err
+	}
+
+	// Create always returns a single record, unwrap from array
+	if arr, ok := parsed.([]interface{}); ok && len(arr) > 0 {
+		return arr[0], nil
+	}
+
+	return parsed, nil
 }
 
 // Update replaces a record in the database

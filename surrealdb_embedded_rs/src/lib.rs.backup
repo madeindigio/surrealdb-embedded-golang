@@ -3,9 +3,8 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::{Arc, Mutex, OnceLock};
 use surrealdb::engine::local::{Db, Mem, RocksDb};
-use surrealdb::Value;
+use surrealdb::sql::Value;
 use surrealdb::Surreal;
-use serde_json;
 
 // Global database instance storage - unified type
 static DB_INSTANCES: OnceLock<Mutex<HashMap<i32, Arc<Surreal<Db>>>>> = OnceLock::new();
@@ -31,115 +30,6 @@ pub const SURREAL_ERR_INVALID_HANDLE: i32 = -2;
 pub const SURREAL_ERR_INIT_FAILED: i32 = -3;
 pub const SURREAL_ERR_QUERY_FAILED: i32 = -4;
 pub const SURREAL_ERR_USE_FAILED: i32 = -5;
-
-/// Convert surrealdb::Value to serde_json::Value
-/// This unwraps the SurrealDB Value type and converts it to standard JSON
-/// without the enum variant tags that cause serialization issues
-fn value_to_json(value: Value) -> serde_json::Value {
-    //  First serialize to get a json value
-    match serde_json::to_value(&value) {
-        Ok(json_val) => unwrap_surrealdb_tagged(json_val),
-        Err(_) => serde_json::Value::Null,
-    }
-}
-
-/// Recursively unwrap SurrealDB's tagged value format
-/// Converts {"Array": [...]} to [...], {"Object": {...}} to {...}, etc.
-fn unwrap_surrealdb_tagged(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(mut obj) => {
-            // Check if this is a single-key wrapper (common for SurrealDB variants)
-            if obj.len() == 1 {
-                let (key, val) = obj.iter().next().unwrap();
-                match key.as_str() {
-                    "Array" => {
-                        // Unwrap array and recursively process each element
-                        if let serde_json::Value::Array(arr) = val {
-                            return serde_json::Value::Array(
-                                arr.iter().map(|v| unwrap_surrealdb_tagged(v.clone())).collect()
-                            );
-                        }
-                    }
-                    "Object" => {
-                        // Unwrap object and recursively process each field
-                        if let serde_json::Value::Object(inner) = val {
-                            let mut unwrapped = serde_json::Map::new();
-                            for (k, v) in inner {
-                                unwrapped.insert(k.clone(), unwrap_surrealdb_tagged(v.clone()));
-                            }
-                            return serde_json::Value::Object(unwrapped);
-                        }
-                    }
-                    "Strand" => {
-                        // String value
-                        return val.clone();
-                    }
-                    "Number" => {
-                        // Number can have nested structure like {"Float": 123.456} or {"Int": 42}
-                        if let serde_json::Value::Object(num_obj) = val {
-                            if num_obj.len() == 1 {
-                                let (num_type, num_val) = num_obj.iter().next().unwrap();
-                                if num_type == "Float" || num_type == "Int" {
-                                    return num_val.clone();
-                                }
-                            }
-                        }
-                        return val.clone();
-                    }
-                    "Bool" => {
-                        return val.clone();
-                    }
-                    "None" | "Null" => {
-                        return serde_json::Value::Null;
-                    }
-                    "Thing" => {
-                        // Thing is a record ID, convert to {tb: "...", id: "..."}
-                        if let serde_json::Value::Object(thing) = val {
-                            let mut unwrapped = serde_json::Map::new();
-                            for (k, v) in thing {
-                                // The id might be wrapped in {"String": "..."} 
-                                if k == "id" {
-                                    unwrapped.insert(k.clone(), unwrap_surrealdb_tagged(v.clone()));
-                                } else {
-                                    unwrapped.insert(k.clone(), v.clone());
-                                }
-                            }
-                            return serde_json::Value::Object(unwrapped);
-                        }
-                        return val.clone();
-                    }
-                    "String" => {
-                        // This is used inside Thing's id field
-                        return val.clone();
-                    }
-                    _ => {}
-                }
-            }
-            
-            // Not a wrapper, process each value in the object recursively
-            for (key, val) in obj.iter_mut() {
-                *val = unwrap_surrealdb_tagged(val.clone());
-            }
-            serde_json::Value::Object(obj)
-        }
-        serde_json::Value::Array(arr) => {
-            // Process array elements recursively
-            serde_json::Value::Array(
-                arr.into_iter().map(unwrap_surrealdb_tagged).collect()
-            )
-        }
-        serde_json::Value::String(s) => {
-            // Special case: "None" should become null
-            if s == "None" {
-                return serde_json::Value::Null;
-            }
-            serde_json::Value::String(s)
-        }
-        // Other types (Number, Bool, Null) are already in standard format
-        other => other,
-    }
-}
-
 
 /// Initialize an embedded SurrealDB instance with memory backend
 /// Returns a handle (positive integer) on success, or negative error code on failure
@@ -241,45 +131,31 @@ pub extern "C" fn surreal_query(handle: i32, query_ptr: *const c_char) -> *mut c
     drop(instances);
 
     let query = unsafe { CStr::from_ptr(query_ptr).to_string_lossy().into_owned() };
-    eprintln!("surreal_query called with: {}", query);
 
     let rt = get_runtime();
     let result = rt.block_on(async { db_instance.query(&query).await });
-    eprintln!("Query executed");
 
     match result {
         Ok(mut response) => {
-            eprintln!("Query succeeded");
-            
-            // The Response contains the results wrapped in Array(Array([...]))
-            // We need to take the OUTER Value which will be like Array(...)
-            let json_result = match response.take::<Value>(0) {
-                Ok(outer_value) => {
-                    eprintln!("Got outer value, converting...");
-                    // Convert the whole thing
-                    let json_value = value_to_json(outer_value);
-                    match serde_json::to_string(&json_value) {
-                        Ok(json) => {
-                            eprintln!("Serialized to JSON: {}", json);
-                            json
-                        }
-                        Err(e) => {
-                            eprintln!("Serialization error: {}", e);
-                            "[]".to_string()
-                        }
+            // Try to take all results - use a more robust approach
+            let json_result = match response.take::<Vec<Value>>(0) {
+                Ok(values) => {
+                    // Convert to JSON and normalize any SurrealDB-specific formatting
+                    match serde_json::to_string(&values) {
+                        Ok(json) => normalize_surrealdb_json(&json),
+                        Err(_) => "[]".to_string(),
                     }
                 }
-                Err(e) => {
-                    eprintln!("Failed to take Value: {}", e);
+                Err(_) => {
+                    // If Vec<Value> fails, just return empty array
+                    // SurrealDB responses should always be Vec<Value>
                     "[]".to_string()
                 }
             };
 
-            eprintln!("Returning: {}", json_result);
             CString::new(json_result).unwrap().into_raw()
         }
         Err(e) => {
-            eprintln!("Query failed: {}", e);
             let error_json = format!(r#"{{"error": "{}"}}"#, e);
             CString::new(error_json).unwrap().into_raw()
         }
@@ -394,20 +270,15 @@ pub extern "C" fn surreal_query_with_params(
 
     match result {
         Ok(mut response) => {
-            let json_result = match response.take::<Value>(0) {
-                Ok(outer_value) => {
-                    eprintln!("Got value from query_with_params, converting...");
-                    let json_value = value_to_json(outer_value);
-                    match serde_json::to_string(&json_value) {
-                        Ok(json) => json,
-                        Err(e) => {
-                            eprintln!("Serialization error: {}", e);
-                            "[]".to_string()
-                        }
-                    }
+            // Use the same robust approach as surreal_query
+            let json_result = match response.take::<Vec<Value>>(0) {
+                Ok(values) => match serde_json::to_string(&values) {
+                    Ok(json) => normalize_surrealdb_json(&json),
+                    Err(_) => "[]".to_string(),
                 },
-                Err(e) => {
-                    eprintln!("Failed to take Value: {}", e);
+                Err(_) => {
+                    // If Vec<Value> fails, just return empty array
+                    // SurrealDB responses should always be Vec<Value>
                     "[]".to_string()
                 }
             };

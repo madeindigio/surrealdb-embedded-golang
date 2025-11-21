@@ -1,0 +1,1 @@
+/www/MCP/Remembrances/surrealdb-embedded/surrealdb_embedded_rs/target/release/libsurrealdb_embedded_rs.so: /www/MCP/Remembrances/surrealdb-embedded/surrealdb_embedded_rs/build.rs /www/MCP/Remembrances/surrealdb-embedded/surrealdb_embedded_rs/cbindgen.toml /www/MCP/Remembrances/surrealdb-embedded/surrealdb_embedded_rs/src/lib.rs
