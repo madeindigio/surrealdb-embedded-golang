@@ -1,11 +1,11 @@
+use serde_json;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::{Arc, Mutex, OnceLock};
-use surrealdb::engine::local::{Db, Mem, RocksDb};
-use surrealdb::Value;
+use surrealdb::engine::local::{Db, Mem, RocksDb, SurrealKv};
 use surrealdb::Surreal;
-use serde_json;
+use surrealdb::Value;
 
 // Global database instance storage - unified type
 static DB_INSTANCES: OnceLock<Mutex<HashMap<i32, Arc<Surreal<Db>>>>> = OnceLock::new();
@@ -56,7 +56,9 @@ fn unwrap_surrealdb_tagged(value: serde_json::Value) -> serde_json::Value {
                         // Unwrap array and recursively process each element
                         if let serde_json::Value::Array(arr) = val {
                             return serde_json::Value::Array(
-                                arr.iter().map(|v| unwrap_surrealdb_tagged(v.clone())).collect()
+                                arr.iter()
+                                    .map(|v| unwrap_surrealdb_tagged(v.clone()))
+                                    .collect(),
                             );
                         }
                     }
@@ -97,7 +99,7 @@ fn unwrap_surrealdb_tagged(value: serde_json::Value) -> serde_json::Value {
                         if let serde_json::Value::Object(thing) = val {
                             let mut unwrapped = serde_json::Map::new();
                             for (k, v) in thing {
-                                // The id might be wrapped in {"String": "..."} 
+                                // The id might be wrapped in {"String": "..."}
                                 if k == "id" {
                                     unwrapped.insert(k.clone(), unwrap_surrealdb_tagged(v.clone()));
                                 } else {
@@ -115,18 +117,16 @@ fn unwrap_surrealdb_tagged(value: serde_json::Value) -> serde_json::Value {
                     _ => {}
                 }
             }
-            
+
             // Not a wrapper, process each value in the object recursively
-            for (key, val) in obj.iter_mut() {
+            for (_key, val) in obj.iter_mut() {
                 *val = unwrap_surrealdb_tagged(val.clone());
             }
             serde_json::Value::Object(obj)
         }
         serde_json::Value::Array(arr) => {
             // Process array elements recursively
-            serde_json::Value::Array(
-                arr.into_iter().map(unwrap_surrealdb_tagged).collect()
-            )
+            serde_json::Value::Array(arr.into_iter().map(unwrap_surrealdb_tagged).collect())
         }
         serde_json::Value::String(s) => {
             // Special case: "None" should become null
@@ -140,14 +140,47 @@ fn unwrap_surrealdb_tagged(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
-
-/// Initialize an embedded SurrealDB instance with memory backend
+/// Initialize an embedded SurrealDB instance with the specified URL
+/// The URL determines the backend type:
+///   - "memory" -> In-memory database
+///   - "rocksdb://path" or "rocksdb:path" -> RocksDB backend
+///   - "surrealkv://path" or "surrealkv:path" -> SurrealKV backend
+///   - "file://path" or "file:path" -> Deprecated, uses RocksDB
 /// Returns a handle (positive integer) on success, or negative error code on failure
 #[no_mangle]
-pub extern "C" fn surreal_init_mem() -> i32 {
+pub extern "C" fn surreal_init(url_ptr: *const c_char) -> i32 {
+    if url_ptr.is_null() {
+        return SURREAL_ERR_NULL_PTR;
+    }
+
+    let url = unsafe { CStr::from_ptr(url_ptr).to_string_lossy().into_owned() };
     let rt = get_runtime();
 
-    match rt.block_on(async { Surreal::new::<Mem>(()).await }) {
+    // Parse the URL and determine backend type
+    let result = if url == "memory" {
+        rt.block_on(async { Surreal::new::<Mem>(()).await })
+    } else if url.starts_with("rocksdb://") || url.starts_with("rocksdb:") {
+        let path = url
+            .trim_start_matches("rocksdb://")
+            .trim_start_matches("rocksdb:");
+        rt.block_on(async { Surreal::new::<RocksDb>(path).await })
+    } else if url.starts_with("surrealkv://") || url.starts_with("surrealkv:") {
+        let path = url
+            .trim_start_matches("surrealkv://")
+            .trim_start_matches("surrealkv:");
+        rt.block_on(async { Surreal::new::<SurrealKv>(path).await })
+    } else if url.starts_with("file://") || url.starts_with("file:") {
+        // Deprecated: file:// maps to rocksdb://
+        let path = url
+            .trim_start_matches("file://")
+            .trim_start_matches("file:");
+        rt.block_on(async { Surreal::new::<RocksDb>(path).await })
+    } else {
+        eprintln!("Unsupported database URL: {}", url);
+        return SURREAL_ERR_INIT_FAILED;
+    };
+
+    match result {
         Ok(db) => {
             let mut next_handle = NEXT_HANDLE.lock().unwrap();
             let handle = *next_handle;
@@ -157,13 +190,25 @@ pub extern "C" fn surreal_init_mem() -> i32 {
             instances.insert(handle, Arc::new(db));
             handle
         }
-        Err(_) => SURREAL_ERR_INIT_FAILED,
+        Err(e) => {
+            eprintln!("Error initializing database: {:?}", e);
+            SURREAL_ERR_INIT_FAILED
+        }
     }
+}
+
+/// Initialize an embedded SurrealDB instance with memory backend
+/// Returns a handle (positive integer) on success, or negative error code on failure
+/// DEPRECATED: Use surreal_init("memory") instead
+#[no_mangle]
+pub extern "C" fn surreal_init_mem() -> i32 {
+    surreal_init(CString::new("memory").unwrap().as_ptr())
 }
 
 /// Initialize an embedded SurrealDB instance with RocksDB backend
 /// path: The file path where the RocksDB data will be stored
 /// Returns a handle (positive integer) on success, or negative error code on failure
+/// DEPRECATED: Use surreal_init("rocksdb://path") instead
 #[no_mangle]
 pub extern "C" fn surreal_init_rocksdb(path_ptr: *const c_char) -> i32 {
     if path_ptr.is_null() {
@@ -171,20 +216,8 @@ pub extern "C" fn surreal_init_rocksdb(path_ptr: *const c_char) -> i32 {
     }
 
     let path = unsafe { CStr::from_ptr(path_ptr).to_string_lossy().into_owned() };
-    let rt = get_runtime();
-
-    match rt.block_on(async { Surreal::new::<RocksDb>(&path).await }) {
-        Ok(db) => {
-            let mut next_handle = NEXT_HANDLE.lock().unwrap();
-            let handle = *next_handle;
-            *next_handle += 1;
-
-            let mut instances = get_db_instances().lock().unwrap();
-            instances.insert(handle, Arc::new(db));
-            handle
-        }
-        Err(_) => SURREAL_ERR_INIT_FAILED,
-    }
+    let url = format!("rocksdb://{}", path);
+    surreal_init(CString::new(url).unwrap().as_ptr())
 }
 
 /// Select namespace and database to use
@@ -250,7 +283,7 @@ pub extern "C" fn surreal_query(handle: i32, query_ptr: *const c_char) -> *mut c
     match result {
         Ok(mut response) => {
             eprintln!("Query succeeded");
-            
+
             // The Response contains the results wrapped in Array(Array([...]))
             // We need to take the OUTER Value which will be like Array(...)
             let json_result = match response.take::<Value>(0) {
@@ -405,7 +438,7 @@ pub extern "C" fn surreal_query_with_params(
                             "[]".to_string()
                         }
                     }
-                },
+                }
                 Err(e) => {
                     eprintln!("Failed to take Value: {}", e);
                     "[]".to_string()
