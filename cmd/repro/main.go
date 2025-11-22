@@ -6,7 +6,7 @@ import (
 
 	"time"
 
-	surrealdb "github.com/yourusername/surrealdb-embedded"
+	surrealdb "github.com/madeindigio/surrealdb-embedded-golang"
 )
 
 func main() {
@@ -25,11 +25,11 @@ func main() {
 	// Create a record with complex types
 	now := time.Now().UTC()
 	data := map[string]interface{}{
-		"name":      "Complex User",
+		"name":       "Complex User",
 		"created_at": now.Format(time.RFC3339),
-		"score":     123.456,
-		"active":    true,
-		"tags":      []string{"a", "b", "c"},
+		"score":      123.456,
+		"active":     true,
+		"tags":       []string{"a", "b", "c"},
 		"metadata": map[string]interface{}{
 			"key": "value",
 		},
