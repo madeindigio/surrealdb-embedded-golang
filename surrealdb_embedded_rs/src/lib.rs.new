@@ -1,0 +1,39 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
+use std::sync::{Arc, Mutex, OnceLock};
+use surrealdb::engine::local::{Db, Mem, RocksDb};
+use surrealdb::Surreal;
+
+// Dynamic record type that can deserialize any SurrealDB record
+#[derive(Debug, Deserialize, Serialize)]
+struct DynamicRecord {
+    #[serde(flatten)]
+    fields: HashMap<String, serde_json::Value>,
+}
+
+// Global database instance storage - unified type
+static DB_INSTANCES: OnceLock<Mutex<HashMap<i32, Arc<Surreal<Db>>>>> = OnceLock::new();
+static NEXT_HANDLE: Mutex<i32> = Mutex::new(1);
+
+// Global Tokio runtime - must be shared across all operations
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+// Get or create the global runtime
+fn get_runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().unwrap())
+}
+
+// Helper to get DB instances map
+fn get_db_instances() -> &'static Mutex<HashMap<i32, Arc<Surreal<Db>>>> {
+    DB_INSTANCES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// Error codes
+pub const SURREAL_OK: i32 = 0;
+pub const SURREAL_ERR_NULL_PTR: i32 = -1;
+pub const SURREAL_ERR_INVALID_HANDLE: i32 = -2;
+pub const SURREAL_ERR_INIT_FAILED: i32 = -3;
+pub const SURREAL_ERR_QUERY_FAILED: i32 = -4;
+pub const SURREAL_ERR_USE_FAILED: i32 = -5;

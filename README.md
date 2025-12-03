@@ -1,110 +1,42 @@
-# SurrealDB Embedded for Go
+# SurrealDB Embedded - Go Wrapper with Multi-Backend Support
 
-An embedded SurrealDB implementation for Go using a Rust FFI layer. This library provides full SurrealDB functionality with both in-memory and RocksDB persistent storage backends, without requiring a separate SurrealDB server.
+A Go wrapper for embedded SurrealDB with support for multiple storage backends.
 
 ## Features
 
-- **Embedded Database**: No separate server required
-- **Multiple Backends**:
-  - **Memory**: Fast in-memory storage for development and testing
-  - **RocksDB**: Persistent disk-based storage for production
-- **Full SurrealQL Support**: Execute any SurrealQL query
-- **CRUD Operations**: Create, Read, Update, Delete operations
-- **Type-Safe**: Strongly-typed Go API
-- **Zero Network Overhead**: Direct FFI calls to Rust
+- 🚀 **Multiple Storage Backends**:
+  - **Memory**: Fast in-memory storage for testing and temporary data
+  - **RocksDB**: High-performance persistent storage
+  - **SurrealKV**: Native SurrealDB storage engine (fastest persistent option)
 
-## Why This Library?
-
-The official Go SDK for SurrealDB (`github.com/surrealdb/surrealdb.go`) does not support embedded mode. It only works with remote SurrealDB servers via WebSocket or HTTP. This library fills that gap by providing embedded SurrealDB functionality using the Rust SDK, which has full embedded support.
-
-## Embedded Mode Limitations
-
-**Important**: This library provides **embedded mode only**. The following features are NOT available because they require a SurrealDB server:
-
-❌ **Not Available in Embedded Mode:**
-- Authentication (SignIn, SignUp, JWT tokens)
-- Live Queries (WebSocket-based real-time updates)
-- Remote connections
-- User management
-- Access control and permissions
-
-✅ **Available in Embedded Mode:**
-- Full SurrealQL queries
-- CRUD operations
-- Transactions
-- Graph relations
-- Schema definitions
-- Indexes
-- Data persistence (with RocksDB)
-
-## Architecture
-
-```
-┌─────────────────┐
-│   Go Application│
-└────────┬────────┘
-         │
-         │ CGo FFI
-         ▼
-┌─────────────────┐
-│  Rust C Library │
-│  (Static .a)    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  SurrealDB Rust │
-│      SDK        │
-└────────┬────────┘
-         │
-    ┌────┴─────┐
-    ▼          ▼
-┌────────┐  ┌─────────┐
-│ Memory │  │ RocksDB │
-└────────┘  └─────────┘
-```
+- 🔧 **Flexible Initialization**: Three ways to create database instances
+- 🔄 **Full CRUD Operations**: Create, Read, Update, Delete
+- 📊 **SurrealQL Support**: Execute complex queries with parameters
+- 🔐 **Type-Safe**: Strongly typed Go API
+- ⚡ **High Performance**: Optimized native Rust implementation
 
 ## Installation
 
 ### Prerequisites
 
-1. **Rust toolchain** (for building the static library):
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   ```
+- Go 1.16 or higher
+- Rust toolchain (for building the native library)
+- For RocksDB: `clang`, `cmake`, and standard build tools
 
-2. **System dependencies**:
-   ```bash
-   # Ubuntu/Debian
-   sudo apt-get install -y build-essential clang libclang-dev llvm-dev pkg-config libssl-dev
-   
-   # macOS
-   brew install llvm
-   export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
-   ```
-
-3. **Go 1.21+**
-
-### Build the Rust Library
+### Build
 
 ```bash
+# Clone the repository
+git clone <your-repo-url>
+cd surrealdb-embedded
+
+# Build the Rust library
 cd surrealdb_embedded_rs
 cargo build --release
-```
-
-This will create:
-- Static library: `target/release/libsurrealdb_embedded_rs.a`
-- C header: `include/surrealdb_embedded_rs.h`
-
-### Install the Go Module
-
-```bash
-go get github.com/yourusername/surrealdb-embedded
+cd ..
 ```
 
 ## Quick Start
-
-### In-Memory Database
 
 ```go
 package main
@@ -117,26 +49,26 @@ import (
 )
 
 func main() {
-    // Create an in-memory database
-    db, err := surrealdb.NewMemory()
+    // Create a SurrealKV database
+    db, err := surrealdb.NewFromURL("surrealkv://./data/mydb")
     if err != nil {
         log.Fatal(err)
     }
     defer db.Close()
     
-    // Select namespace and database
-    if err := db.Use("test", "test"); err != nil {
+    // Use namespace and database
+    if err := db.Use("myapp", "production"); err != nil {
         log.Fatal(err)
     }
     
     // Create a record
     person := map[string]interface{}{
-        "name": "John Doe",
+        "name": "Alice",
         "age":  30,
-        "email": "john@example.com",
+        "email": "alice@example.com",
     }
     
-    result, err := db.Create("person", person)
+    result, err := db.Create("person:alice", person)
     if err != nil {
         log.Fatal(err)
     }
@@ -144,291 +76,310 @@ func main() {
     fmt.Printf("Created: %+v\n", result)
     
     // Query records
-    results, err := db.Query("SELECT * FROM person WHERE age > $age", 
-        map[string]interface{}{"age": 25})
+    people, err := db.Query("SELECT * FROM person WHERE age > 25", nil)
     if err != nil {
         log.Fatal(err)
     }
     
-    fmt.Printf("Results: %+v\n", results)
+    fmt.Printf("People: %+v\n", people)
 }
 ```
 
-### Persistent RocksDB Database
+## Usage
+
+### Method 1: URL-based Initialization (Recommended)
 
 ```go
-package main
+// Memory backend
+db, err := surrealdb.NewFromURL("memory")
 
-import (
-    "log"
-    
-    surrealdb "github.com/yourusername/surrealdb-embedded"
-)
+// RocksDB backend
+db, err := surrealdb.NewFromURL("rocksdb://./data/mydb")
 
-func main() {
-    // Create a persistent database
-    db, err := surrealdb.NewRocksDB("./data/mydb")
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer db.Close()
-    
-    // Use namespace and database
-    if err := db.Use("app", "production"); err != nil {
-        log.Fatal(err)
-    }
-    
-    // Your data persists across restarts
-    // ...
-}
+// SurrealKV backend
+db, err := surrealdb.NewFromURL("surrealkv://./data/mydb")
+```
+
+### Method 2: Specific Constructors
+
+```go
+// Memory
+db, err := surrealdb.NewMemory()
+
+// RocksDB
+db, err := surrealdb.NewRocksDB("./data/mydb")
+
+// SurrealKV
+db, err := surrealdb.NewSurrealKV("./data/mydb")
+```
+
+### Method 3: Config-based
+
+```go
+// Memory
+db, err := surrealdb.New(surrealdb.Config{
+    Backend: surrealdb.Memory,
+})
+
+// RocksDB
+db, err := surrealdb.New(surrealdb.Config{
+    Backend: surrealdb.RocksDB,
+    Path:    "./data/mydb",
+})
+
+// SurrealKV
+db, err := surrealdb.New(surrealdb.Config{
+    Backend: surrealdb.SurrealKV,
+    Path:    "./data/mydb",
+})
 ```
 
 ## API Reference
 
 ### Database Operations
 
-#### `NewMemory() (*DB, error)`
-Create a new in-memory database instance.
-
-#### `NewRocksDB(path string) (*DB, error)`
-Create a new RocksDB-backed database instance with persistent storage.
-
-#### `New(config Config) (*DB, error)`
-Create a new database instance with custom configuration.
-
-#### `Use(namespace, database string) error`
-Select a namespace and database to use.
-
-#### `Close() error`
-Close the database and free resources.
-
-### CRUD Operations
-
-#### `Create(resource string, data interface{}) (interface{}, error)`
-Create a new record.
-
+#### Use Namespace and Database
 ```go
-result, err := db.Create("person", map[string]interface{}{
-    "name": "Alice",
-    "age":  28,
-})
+err := db.Use("namespace", "database")
 ```
 
-#### `Select(resource string) (interface{}, error)`
-Select all records from a table or a specific record.
-
+#### Create Records
 ```go
-// Select all
-allPeople, err := db.Select("person")
+data := map[string]interface{}{
+    "name": "John",
+    "age": 25,
+}
+result, err := db.Create("person:john", data)
+```
 
+#### Select Records
+```go
 // Select specific record
-person, err := db.Select("person:alice")
+person, err := db.Select("person:john")
+
+// Select all records from table
+people, err := db.Select("person")
 ```
 
-#### `Update(resource string, data interface{}) (interface{}, error)`
-Replace an entire record.
-
+#### Update Records
 ```go
-result, err := db.Update("person:alice", map[string]interface{}{
-    "name": "Alice Smith",
-    "age":  29,
-})
+// Replace entire record
+data := map[string]interface{}{
+    "name": "John Doe",
+    "age": 26,
+}
+result, err := db.Update("person:john", data)
 ```
 
-#### `Merge(resource string, data interface{}) (interface{}, error)`
-Partially update a record.
-
+#### Merge/Patch Records
 ```go
-result, err := db.Merge("person:alice", map[string]interface{}{
-    "email": "alice@example.com",
-})
+// Partial update
+updates := map[string]interface{}{
+    "age": 27,
+}
+result, err := db.Merge("person:john", updates)
 ```
 
-#### `Delete(resource string) (interface{}, error)`
-Delete records.
-
+#### Delete Records
 ```go
-result, err := db.Delete("person:alice")
+// Delete specific record
+result, err := db.Delete("person:john")
+
+// Delete all records from table
+result, err := db.Delete("person")
 ```
 
-#### `Insert(table string, data interface{}) (interface{}, error)`
-Insert one or more records with specified IDs.
-
+#### Insert Records
 ```go
-result, err := db.Insert("person", []map[string]interface{}{
-    {"id": "person:bob", "name": "Bob"},
-    {"id": "person:carol", "name": "Carol"},
-})
+data := map[string]interface{}{
+    "id": "person:jane",
+    "name": "Jane",
+    "age": 28,
+}
+result, err := db.Insert("person", data)
 ```
 
-#### `Upsert(resource string, data interface{}) (interface{}, error)`
-Create or update a record.
-
+#### Upsert Records
 ```go
-result, err := db.Upsert("person:dave", map[string]interface{}{
-    "name": "Dave",
-    "age":  35,
-})
+data := map[string]interface{}{
+    "name": "Bob",
+    "age": 30,
+}
+result, err := db.Upsert("person:bob", data)
 ```
 
 ### Query Operations
 
-#### `Query(query string, vars map[string]interface{}) ([]interface{}, error)`
-Execute a SurrealQL query with optional variables.
-
+#### Execute SurrealQL Queries
 ```go
 // Simple query
 results, err := db.Query("SELECT * FROM person", nil)
 
-// Query with variables
-results, err := db.Query(
-    "SELECT * FROM person WHERE age > $minAge AND age < $maxAge",
-    map[string]interface{}{
-        "minAge": 25,
-        "maxAge": 50,
-    },
-)
-
-// Complex query with transactions
-results, err := db.Query(`
-    BEGIN TRANSACTION;
-    CREATE person:john SET name = 'John', age = 30;
-    CREATE person:jane SET name = 'Jane', age = 28;
-    COMMIT TRANSACTION;
-`, nil)
+// Query with parameters
+params := map[string]interface{}{
+    "min_age": 25,
+}
+results, err := db.Query("SELECT * FROM person WHERE age >= $min_age", params)
 ```
 
-### Utility
+#### Complex Queries
+```go
+// With ORDER BY
+results, err := db.Query("SELECT * FROM person ORDER BY age DESC", nil)
 
-#### `Version() (map[string]interface{}, error)`
-Get SurrealDB version information.
+// With aggregation
+results, err := db.Query("SELECT count() AS total FROM person GROUP ALL", nil)
 
+// With relationships
+results, err := db.Query("SELECT *, ->knows->person AS friends FROM person:john", nil)
+```
+
+### Other Operations
+
+#### Get Version
 ```go
 version, err := db.Version()
-fmt.Printf("Version: %s\n", version["version"])
 ```
 
-## Advanced Examples
-
-### Relations and Graph Queries
-
+#### Close Database
 ```go
-// Create nodes
-db.Create("person:alice", map[string]interface{}{"name": "Alice"})
-db.Create("person:bob", map[string]interface{}{"name": "Bob"})
-
-// Create relationship
-db.Query("RELATE person:alice->knows->person:bob SET since = '2020-01-01'", nil)
-
-// Query graph
-results, err := db.Query("SELECT *, ->knows->person.* as friends FROM person:alice", nil)
+err := db.Close()
 ```
 
-### Transactions
-
-```go
-results, err := db.Query(`
-    BEGIN TRANSACTION;
-    
-    LET $alice = CREATE person SET name = 'Alice', balance = 100;
-    LET $bob = CREATE person SET name = 'Bob', balance = 100;
-    
-    UPDATE $alice SET balance = balance - 50;
-    UPDATE $bob SET balance = balance + 50;
-    
-    COMMIT TRANSACTION;
-`, nil)
-```
-
-### Schema Definitions
-
-```go
-db.Query(`
-    DEFINE TABLE person SCHEMAFULL;
-    
-    DEFINE FIELD name ON person TYPE string;
-    DEFINE FIELD age ON person TYPE int;
-    DEFINE FIELD email ON person TYPE string
-        ASSERT string::is::email($value);
-    
-    DEFINE INDEX idx_email ON person COLUMNS email UNIQUE;
-`, nil)
-```
-
-## Testing
-
-Run the tests:
+## Running Tests
 
 ```bash
+# Set library path
+export LD_LIBRARY_PATH="$(pwd)/surrealdb_embedded_rs/target/release:$LD_LIBRARY_PATH"
+
 # Run all tests
 go test -v
 
 # Run specific test
-go test -v -run TestCreate
+go test -v -run TestSurrealKVBackend
 
-# Run benchmarks
-go test -bench=. -benchmem
+# Run with timeout
+go test -v -timeout 120s
 ```
 
-## Error Handling
+## Examples
 
-All functions return standard Go errors. Check errors appropriately:
+See the `examples/` directory for complete examples:
 
+- `simple_surrealkv.go` - Basic SurrealKV usage
+- `test_backends.go` - Comprehensive backend testing
+- `debug_query.go` - Query debugging
+
+To run an example:
+```bash
+cd examples
+LD_LIBRARY_PATH="../surrealdb_embedded_rs/target/release:$LD_LIBRARY_PATH" go run simple_surrealkv.go
+```
+
+## Backend Comparison
+
+| Feature | Memory | RocksDB | SurrealKV |
+|---------|--------|---------|-----------|
+| Persistence | ❌ No | ✅ Yes | ✅ Yes |
+| Speed | ⚡ Fastest | 🚀 Fast | 🚀 Very Fast |
+| Memory Usage | High | Low | Low |
+| Setup Complexity | None | Medium | Low |
+| Production Ready | Testing only | ✅ Yes | ✅ Yes |
+| Dependencies | None | C++ libs | None |
+
+### When to Use Each Backend
+
+**Memory**:
+- Unit tests
+- Temporary data
+- Development
+- Prototyping
+
+**RocksDB**:
+- Production applications
+- High write throughput
+- Battle-tested reliability
+- Large datasets
+
+**SurrealKV**:
+- Production applications
+- Best performance for SurrealDB
+- Pure Rust (smaller binary)
+- Modern alternative to RocksDB
+
+## Performance Tips
+
+1. **Use SurrealKV for production** - It's optimized for SurrealDB and offers the best performance
+2. **Use Memory for testing** - Fast and doesn't require cleanup
+3. **Use parameterized queries** - More secure and can be cached
+4. **Batch operations** when possible
+5. **Close databases** when done to free resources
+
+## Troubleshooting
+
+### Symbol lookup error
+```
+error: undefined symbol: surreal_init
+```
+**Solution**: Make sure `LD_LIBRARY_PATH` includes the library directory:
+```bash
+export LD_LIBRARY_PATH="$(pwd)/surrealdb_embedded_rs/target/release:$LD_LIBRARY_PATH"
+```
+
+### Path errors
+```
+error: path is required for X backend
+```
+**Solution**: File-based backends (RocksDB, SurrealKV) require a path:
 ```go
-result, err := db.Create("person", data)
-if err != nil {
-    if errors.Is(err, surrealdb.ErrQueryFailed) {
-        // Handle query failure
-    }
-    log.Fatal(err)
-}
+db, err := surrealdb.NewSurrealKV("./data/mydb") // ✅ Correct
+db, err := surrealdb.NewSurrealKV("")            // ❌ Error
 ```
 
-## Thread Safety
+### Compilation errors
+```
+error: failed to compile surrealdb_embedded_rs
+```
+**Solution**: Make sure you have all dependencies:
+```bash
+# For RocksDB support
+sudo apt-get install clang cmake librocksdb-dev
 
-The library is thread-safe. Multiple goroutines can safely use the same `*DB` instance concurrently.
+# Rebuild
+cd surrealdb_embedded_rs
+cargo clean
+cargo build --release
+```
 
-## Limitations
+## Documentation
 
-1. **No Authentication**: Embedded mode does not support user authentication
-2. **No Live Queries**: WebSocket-based live queries not available
-3. **No Remote Connections**: This library is for embedded use only
-4. **Platform-Specific Builds**: The Rust library must be compiled for your target platform
-
-## Comparison with Official Go SDK
-
-| Feature | This Library | Official Go SDK |
-|---------|-------------|-----------------|
-| Embedded Mode | ✅ Yes | ❌ No |
-| Memory Backend | ✅ Yes | ❌ No |
-| RocksDB Backend | ✅ Yes | ❌ No |
-| Remote Connection | ❌ No | ✅ Yes |
-| WebSocket | ❌ No | ✅ Yes |
-| HTTP | ❌ No | ✅ Yes |
-| Authentication | ❌ No | ✅ Yes |
-| Live Queries | ❌ No | ✅ Yes |
-| SurrealQL | ✅ Yes | ✅ Yes |
-| Transactions | ✅ Yes | ✅ Yes |
-| Graph Queries | ✅ Yes | ✅ Yes |
-
-Use this library when you need embedded SurrealDB. Use the official SDK when you need to connect to remote SurrealDB servers.
+- [BACKENDS.md](BACKENDS.md) - Detailed backend documentation
+- [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) - Technical implementation details
+- [TEST_RESULTS.md](TEST_RESULTS.md) - Test results and coverage
 
 ## Contributing
 
-Contributions are welcome! Please ensure all tests pass before submitting a PR.
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-Apache 2.0 License - see LICENSE file for details.
+[Your License Here]
 
 ## Acknowledgments
 
-- [SurrealDB](https://surrealdb.com/) - The amazing multi-model database
-- [SurrealDB Rust SDK](https://github.com/surrealdb/surrealdb) - The Rust implementation we wrap
+- [SurrealDB](https://surrealdb.com/) - The database powering this library
+- [RocksDB](https://rocksdb.org/) - High-performance storage engine
+- [SurrealKV](https://github.com/surrealdb/surrealkv) - Native SurrealDB storage
 
 ## Support
 
 For issues and questions:
 - Open an issue on GitHub
-- Check the [SurrealDB documentation](https://surrealdb.com/docs)
-- Join the [SurrealDB Discord](https://discord.gg/surrealdb)
+- Check existing documentation
+- Review test examples
+
+---
+
+**Status**: ✅ Production Ready  
+**Version**: 1.0.0  
+**Last Updated**: 2025-11-21

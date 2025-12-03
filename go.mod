@@ -1,4 +1,4 @@
-module github.com/yourusername/surrealdb-embedded
+module github.com/madeindigio/surrealdb-embedded-golang
 
 go 1.21
 

@@ -17,6 +17,7 @@ package surrealdb
 #define SURREAL_ERR_USE_FAILED -5
 
 // Function declarations
+extern int surreal_init(const char* url);
 extern int surreal_init_mem();
 extern int surreal_init_rocksdb(const char* path);
 extern int surreal_use(int handle, const char* ns, const char* db);
@@ -38,6 +39,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"unsafe"
 )
 
@@ -63,33 +65,46 @@ const (
 	Memory BackendType = iota
 	// RocksDB backend persists data to disk using RocksDB
 	RocksDB
+	// SurrealKV backend persists data using SurrealKV engine
+	SurrealKV
 )
 
 // Config holds database configuration
 type Config struct {
 	Backend BackendType
-	Path    string // Only used for RocksDB backend
+	Path    string // Path for file-based backends (RocksDB, SurrealKV)
+}
+
+// NewFromURL creates a new embedded SurrealDB instance from a URL string
+// Supported URLs:
+//   - "memory" - In-memory database
+//   - "rocksdb://path/to/db" - RocksDB backend
+//   - "surrealkv://path/to/db" - SurrealKV backend
+//   - "file://path/to/db" - Deprecated, uses RocksDB
+func NewFromURL(url string) (*DB, error) {
+	cURL := C.CString(url)
+	defer C.free(unsafe.Pointer(cURL))
+
+	handle := int(C.surreal_init(cURL))
+	if handle < 0 {
+		return nil, handleError(handle)
+	}
+	return &DB{handle: handle}, nil
 }
 
 // NewMemory creates a new in-memory embedded SurrealDB instance
 func NewMemory() (*DB, error) {
-	handle := int(C.surreal_init_mem())
-	if handle < 0 {
-		return nil, handleError(handle)
-	}
-	return &DB{handle: handle}, nil
+	return NewFromURL("memory")
 }
 
 // NewRocksDB creates a new embedded SurrealDB instance with RocksDB backend
 func NewRocksDB(path string) (*DB, error) {
-	cPath := C.CString(path)
-	defer C.free(unsafe.Pointer(cPath))
+	return NewFromURL(fmt.Sprintf("rocksdb://%s", path))
+}
 
-	handle := int(C.surreal_init_rocksdb(cPath))
-	if handle < 0 {
-		return nil, handleError(handle)
-	}
-	return &DB{handle: handle}, nil
+// NewSurrealKV creates a new embedded SurrealDB instance with SurrealKV backend
+func NewSurrealKV(path string) (*DB, error) {
+	return NewFromURL(fmt.Sprintf("surrealkv://%s", path))
 }
 
 // New creates a new embedded SurrealDB instance with the specified configuration
@@ -102,6 +117,11 @@ func New(config Config) (*DB, error) {
 			return nil, errors.New("path is required for RocksDB backend")
 		}
 		return NewRocksDB(config.Path)
+	case SurrealKV:
+		if config.Path == "" {
+			return nil, errors.New("path is required for SurrealKV backend")
+		}
+		return NewSurrealKV(config.Path)
 	default:
 		return nil, errors.New("unknown backend type")
 	}
@@ -154,6 +174,11 @@ func (db *DB) Query(query string, vars map[string]interface{}) ([]interface{}, e
 		}
 	}
 
+	// Handle null result (e.g., from DEFINE statements)
+	if jsonStr == "null" {
+		return []interface{}{}, nil
+	}
+
 	var data []interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal result: %w", err)
@@ -173,7 +198,22 @@ func (db *DB) Select(resource string) (interface{}, error) {
 	}
 	defer C.surreal_free_string(result)
 
-	return parseResult(C.GoString(result))
+	parsed, err := parseResult(C.GoString(result))
+	if err != nil {
+		return nil, err
+	}
+
+	// If resource contains ":", it's querying a specific record (e.g., "person:123")
+	// In this case, unwrap the array and return the first element
+	if strings.Contains(resource, ":") {
+		if arr, ok := parsed.([]interface{}); ok && len(arr) > 0 {
+			return arr[0], nil
+		}
+		// If it's already a single object or empty, return as is
+		return parsed, nil
+	}
+
+	return parsed, nil
 }
 
 // Create creates a new record in the database
@@ -194,7 +234,17 @@ func (db *DB) Create(resource string, data interface{}) (interface{}, error) {
 	}
 	defer C.surreal_free_string(result)
 
-	return parseResult(C.GoString(result))
+	parsed, err := parseResult(C.GoString(result))
+	if err != nil {
+		return nil, err
+	}
+
+	// Create always returns a single record, unwrap from array
+	if arr, ok := parsed.([]interface{}); ok && len(arr) > 0 {
+		return arr[0], nil
+	}
+
+	return parsed, nil
 }
 
 // Update replaces a record in the database
