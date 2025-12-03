@@ -355,3 +355,104 @@ func parseResult(jsonStr string) (interface{}, error) {
 
 	return result, nil
 }
+
+// NewFromURL creates a new embedded SurrealDB instance from a URL string.
+// Supported URL schemes:
+//   - memory:// - In-memory backend
+//   - rocksdb://path - RocksDB persistent backend
+//   - surrealkv://path - SurrealKV backend (alias for RocksDB)
+//   - file://path - File-based backend (alias for RocksDB)
+//
+// Examples:
+//   - "memory://"
+//   - "rocksdb:///path/to/db"
+//   - "surrealkv:///home/user/data/mydb"
+//   - "rocksdb://./relative/path"
+func NewFromURL(url string) (*DB, error) {
+	// Parse the URL scheme
+	scheme, path := parseURL(url)
+	
+	switch scheme {
+	case "memory", "mem":
+		return NewMemory()
+	case "rocksdb", "surrealkv", "file":
+		if path == "" {
+			return nil, errors.New("path is required for persistent backends")
+		}
+		// Expand ~ to home directory
+		path = expandHome(path)
+		return NewRocksDB(path)
+	case "":
+		// No scheme, treat as RocksDB path
+		return NewRocksDB(expandHome(url))
+	default:
+		return nil, fmt.Errorf("unsupported URL scheme: %s", scheme)
+	}
+}
+
+// parseURL extracts scheme and path from a URL string
+func parseURL(url string) (scheme, path string) {
+	// Look for :// separator
+	if idx := indexOf(url, "://"); idx != -1 {
+		scheme = url[:idx]
+		path = url[idx+3:]
+	} else if idx := indexOf(url, ":"); idx != -1 && idx < 10 {
+		// Also support scheme: without //
+		scheme = url[:idx]
+		path = url[idx+1:]
+	} else {
+		// No scheme found
+		path = url
+	}
+	
+	// Remove leading slashes from path for absolute paths
+	// e.g., "rocksdb:///path" -> path="/path"
+	// but keep relative paths as-is
+	return scheme, path
+}
+
+// indexOf returns the index of substr in s, or -1 if not found
+func indexOf(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
+
+// expandHome expands ~ to the user's home directory
+func expandHome(path string) string {
+	if len(path) == 0 {
+		return path
+	}
+	if path[0] == '~' {
+		if home := getHomeDir(); home != "" {
+			if len(path) == 1 {
+				return home
+			}
+			if path[1] == '/' {
+				return home + path[1:]
+			}
+		}
+	}
+	return path
+}
+
+// getHomeDir returns the user's home directory
+func getHomeDir() string {
+	if home := getenv("HOME"); home != "" {
+		return home
+	}
+	if home := getenv("USERPROFILE"); home != "" {
+		return home
+	}
+	return ""
+}
+
+// getenv is a helper to get environment variables
+func getenv(key string) string {
+	// Import os inline to avoid adding imports at the top
+	// This is a workaround - in production, import "os" at the top
+	return C.GoString(C.getenv(C.CString(key)))
+}
