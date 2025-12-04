@@ -81,7 +81,7 @@ type Config struct {
 //   - "rocksdb://path/to/db" - RocksDB backend
 //   - "surrealkv://path/to/db" - SurrealKV backend
 //   - "file://path/to/db" - Deprecated, uses RocksDB
-func newFromURLDirect(url string) (*DB, error) {
+func NewFromURL(url string) (*DB, error) {
 	cURL := C.CString(url)
 	defer C.free(unsafe.Pointer(cURL))
 
@@ -94,17 +94,17 @@ func newFromURLDirect(url string) (*DB, error) {
 
 // NewMemory creates a new in-memory embedded SurrealDB instance
 func NewMemory() (*DB, error) {
-	return newFromURLDirect("memory")
+	return NewFromURL("memory")
 }
 
 // NewRocksDB creates a new embedded SurrealDB instance with RocksDB backend
 func NewRocksDB(path string) (*DB, error) {
-	return newFromURLDirect(fmt.Sprintf("rocksdb://%s", path))
+	return NewFromURL(fmt.Sprintf("rocksdb://%s", path))
 }
 
 // NewSurrealKV creates a new embedded SurrealDB instance with SurrealKV backend
 func NewSurrealKV(path string) (*DB, error) {
-	return newFromURLDirect(fmt.Sprintf("surrealkv://%s", path))
+	return NewFromURL(fmt.Sprintf("surrealkv://%s", path))
 }
 
 // New creates a new embedded SurrealDB instance with the specified configuration
